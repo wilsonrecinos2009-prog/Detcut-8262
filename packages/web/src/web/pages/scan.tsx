@@ -4,6 +4,7 @@ import {
   useAnalyze,
   useAnalyzeCamera,
   useDeviceFeed,
+  useScans,
   useTaxonomy,
   uploadImage,
 } from "../queries/scans";
@@ -24,6 +25,7 @@ export default function ScanPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<ScanLike | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
 
   const taxonomy = useTaxonomy();
   const patients = usePatients();
@@ -31,6 +33,7 @@ export default function ScanPage() {
   const analyzeCamera = useAnalyzeCamera();
   const assign = useAssignScan();
   const feed = useDeviceFeed(modo === "dispositivo");
+  const scans = useScans();
 
   const labels = Object.fromEntries((taxonomy.data?.classes ?? []).map((c) => [c.code, c.label]));
   const threshold = taxonomy.data?.threshold ?? 0.6;
@@ -45,7 +48,6 @@ export default function ScanPage() {
     });
   }
 
-  /** Descarta la imagen elegida por error y deja el selector limpio. */
   function quitarImagen() {
     pick(null);
     setResult(null);
@@ -70,6 +72,7 @@ export default function ScanPage() {
       setUploading(false);
       const scan = await analyze.mutateAsync({ imageKey, source: "web", ...commonInput() });
       setResult(scan as ScanLike);
+      setSelectedId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo completar el análisis.");
     } finally {
@@ -83,207 +86,298 @@ export default function ScanPage() {
     try {
       const scan = await analyzeCamera.mutateAsync({ dataUrl, ...commonInput() });
       setResult(scan as ScanLike);
+      setSelectedId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo completar el análisis.");
     }
   }
 
-  return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-extrabold tracking-tight">Nuevo escaneo</h1>
-        <p className="text-sm text-muted-foreground">
-          Suba una imagen, capture con la cámara o reciba la captura del prototipo ESP32-CAM.
-        </p>
-      </header>
+  const recentList = (scans.data ?? []).slice(0, 20);
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,380px)_1fr]">
-        <section className="card-clinic space-y-4 p-5">
-          <div>
-            <div className="card-label">Nuevo escaneo</div>
-            <div className="card-title">Analizar lesión</div>
-          </div>
-          <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-surface2 p-1">
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "340px 1fr",
+        gap: "20px",
+        minHeight: "calc(100vh - 140px)",
+      }}
+    >
+      {/* ── SIDEBAR IZQUIERDA ── */}
+      <aside style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+
+        {/* Card análisis */}
+        <div className="card-clinic" style={{ padding: "18px" }}>
+          <div className="card-label">Nuevo escaneo</div>
+          <div className="card-title" style={{ marginBottom: "14px" }}>Analizar lesión</div>
+
+          {/* Selector de paciente */}
+          <select
+            className="field"
+            style={{ marginBottom: "12px" }}
+            value={patientId}
+            onChange={(e) => setPatientId(e.target.value)}
+          >
+            <option value="">Ref. paciente (opcional)</option>
+            {(patients.data ?? []).map((p) => (
+              <option key={p.id} value={p.id}>{p.ref} — {p.fullName}</option>
+            ))}
+          </select>
+
+          {/* Tabs modo */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr 1fr",
+              gap: "4px",
+              background: "var(--surface2)",
+              border: "1px solid var(--border)",
+              borderRadius: "10px",
+              padding: "4px",
+              marginBottom: "12px",
+            }}
+          >
             {([
               ["archivo", "Archivo", Upload],
               ["camara", "Cámara", Camera],
-              ["dispositivo", "ESP32-CAM", Cpu],
+              ["dispositivo", "ESP32", Cpu],
             ] as const).map(([id, label, Icon]) => (
               <button
                 key={id}
                 type="button"
                 onClick={() => setModo(id)}
-                className={`flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold transition ${
-                  modo === id ? "bg-surface text-primary shadow-sm" : "text-muted-foreground"
-                }`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "4px",
+                  padding: "7px 4px",
+                  border: "none",
+                  borderRadius: "7px",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  background: modo === id ? "var(--surface)" : "transparent",
+                  color: modo === id ? "var(--primary)" : "var(--muted-foreground)",
+                  boxShadow: modo === id ? "0 1px 4px rgba(22,50,74,0.14)" : "none",
+                  transition: "all 0.2s",
+                }}
               >
-                <Icon size={14} /> {label}
+                <Icon size={13} /> {label}
               </button>
             ))}
           </div>
 
+          {/* Zona subida */}
           {modo === "archivo" && (
-            <div className="space-y-3">
-              <div className="relative">
-                <label htmlFor="file" className="upload-zone">
-                  {preview ? (
-                    <img src={preview} alt="Vista previa" className="mx-auto max-h-52 rounded-lg object-contain" />
-                  ) : (
-                    <>
-                      <div className="upload-icon">
-                        <Upload size={20} />
-                      </div>
-                      <p>Arrastra o haz clic aquí</p>
-                      <span>JPG, PNG · desde cámara o prototipo</span>
-                    </>
-                  )}
-                </label>
-                {file && (
-                  <button
-                    type="button"
-                    onClick={quitarImagen}
-                    disabled={busy}
-                    aria-label="Quitar imagen"
-                    title="Quitar imagen"
-                    className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/65 text-white transition hover:bg-black/80 disabled:opacity-50"
-                  >
-                    <X size={14} />
-                  </button>
+            <div style={{ position: "relative", marginBottom: "12px" }}>
+              <label htmlFor="file" className="upload-zone">
+                {preview ? (
+                  <img src={preview} alt="Vista previa" style={{ maxHeight: "160px", width: "100%", objectFit: "cover", borderRadius: "8px" }} />
+                ) : (
+                  <>
+                    <div className="upload-icon"><Upload size={20} /></div>
+                    <p>Arrastra o haz clic aquí</p>
+                    <span>JPG, PNG · desde cámara o prototipo</span>
+                  </>
                 )}
-              </div>
-              <input
-                id="file"
-                aria-label="Seleccionar imagen"
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => pick(e.target.files?.[0] ?? null)}
-              />
-              {file && <p className="mono truncate text-[11px] text-muted-foreground">{file.name}</p>}
+              </label>
+              {file && (
+                <button
+                  type="button"
+                  onClick={quitarImagen}
+                  disabled={busy}
+                  style={{
+                    position: "absolute", top: "8px", right: "8px",
+                    width: "26px", height: "26px", borderRadius: "50%",
+                    background: "rgba(0,0,0,0.6)", border: "none",
+                    color: "#fff", cursor: "pointer", display: "grid", placeItems: "center",
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              )}
+              <input id="file" type="file" accept="image/*" className="hidden"
+                onChange={(e) => pick(e.target.files?.[0] ?? null)} />
             </div>
           )}
 
-          {modo === "camara" && <CameraCapture onCapture={analizarCaptura} busy={busy} />}
+          {modo === "camara" && (
+            <div style={{ marginBottom: "12px" }}>
+              <CameraCapture onCapture={analizarCaptura} busy={busy} />
+            </div>
+          )}
 
           {modo === "dispositivo" && (
-            <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Capturas recibidas del prototipo en las últimas 12 horas. Se actualiza automáticamente.
+            <div style={{ marginBottom: "12px" }}>
+              <p style={{ fontSize: "11px", color: "var(--muted-foreground)", marginBottom: "8px" }}>
+                Capturas del ESP32-CAM en las últimas 12 horas.
               </p>
               {feed.isLoading ? (
-                <Loader text="Escuchando el dispositivo..." />
+                <Loader text="Escuchando dispositivo..." />
               ) : (feed.data ?? []).length === 0 ? (
-                <Empty text="Sin capturas del dispositivo todavía. Verifique el token en Dispositivos." />
+                <Empty text="Sin capturas del dispositivo todavía." />
               ) : (
-                <ul className="space-y-2">
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                   {(feed.data ?? []).map((s) => (
-                    <li key={s.id}>
-                      <button
-                        type="button"
-                        onClick={() => setResult(s as ScanLike)}
-                        className={`recent-item w-full text-left ${result?.id === s.id ? "active" : ""}`}
-                      >
-                        <span className="recent-thumb">
-                          <img src={s.imageUrl} alt="" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-xs font-bold">{s.diagnosis}</span>
-                          <span className="mono block text-[10px] text-muted-foreground">{fmtDate(s.createdAt)}</span>
-                        </span>
-                        <TriageBadge triage={s.triage} size="sm" />
-                      </button>
-                    </li>
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => { setResult(s as ScanLike); setSelectedId(s.id); }}
+                      className={`recent-item ${selectedId === s.id ? "active" : ""}`}
+                    >
+                      <span className="recent-thumb"><img src={s.imageUrl} alt="" /></span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: "block", fontSize: "12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.diagnosis}</span>
+                        <span style={{ display: "block", fontSize: "10px", color: "var(--muted-foreground)", fontFamily: "var(--font-mono)" }}>{fmtDate(s.createdAt)}</span>
+                      </span>
+                      <TriageBadge triage={s.triage} size="sm" />
+                    </button>
                   ))}
-                </ul>
+                </div>
               )}
             </div>
           )}
 
-          <div className="space-y-3 border-t border-border pt-4">
+          {/* Zona anatómica y notas */}
+          <div style={{ borderTop: "1px solid var(--border)", paddingTop: "12px", marginBottom: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
             <div>
               <label className="label-xs" htmlFor="site">Zona anatómica</label>
-              <input id="site" aria-label="Zona anatomica" className="field mt-1.5" value={bodySite} placeholder="Ej. antebrazo derecho"
-                onChange={(e) => setBodySite(e.target.value)} />
-            </div>
-            <div>
-              <label className="label-xs" htmlFor="pat">Paciente (opcional)</label>
-              <select id="pat" className="field mt-1.5" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
-                <option value="">Sin asignar</option>
-                {(patients.data ?? []).map((p) => (
-                  <option key={p.id} value={p.id}>{p.ref} — {p.fullName}</option>
-                ))}
-              </select>
+              <input id="site" className="field" style={{ marginTop: "6px" }} value={bodySite}
+                placeholder="Ej. antebrazo derecho" onChange={(e) => setBodySite(e.target.value)} />
             </div>
             <div>
               <label className="label-xs" htmlFor="notes">Notas clínicas</label>
-              <textarea id="notes" aria-label="Notas clinicas" rows={2} className="field mt-1.5" value={notes}
-                placeholder="Tiempo de evolución, síntomas, cambios recientes..."
-                onChange={(e) => setNotes(e.target.value)} />
+              <textarea id="notes" rows={2} className="field" style={{ marginTop: "6px" }} value={notes}
+                placeholder="Tiempo de evolución, síntomas..." onChange={(e) => setNotes(e.target.value)} />
             </div>
           </div>
 
           {modo === "archivo" && (
-            <button type="button" className="btn-primary w-full" onClick={analizarArchivo} disabled={!file || busy}>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ width: "100%", justifyContent: "center" }}
+              onClick={analizarArchivo}
+              disabled={!file || busy}
+            >
               {busy && <LoaderCircle size={16} className="animate-spin" />}
-              {uploading ? "Subiendo imagen..." : analyze.isPending ? "Analizando con el panel de modelos..." : "Analizar imagen"}
+              {uploading ? "Subiendo..." : analyze.isPending ? "Analizando..." : "▶ Analizar imagen"}
             </button>
           )}
 
           {error && (
-            <p className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs font-semibold text-danger">
+            <p style={{ marginTop: "10px", padding: "10px 14px", background: "rgba(214,69,69,0.1)", border: "1px solid rgba(214,69,69,0.3)", borderRadius: "8px", fontSize: "12px", color: "var(--danger)", fontWeight: 600 }}>
               {error}
             </p>
           )}
-        </section>
+        </div>
 
-        <section className="min-w-0">
-          {busy && !result && (
-            <div className="card-clinic flex flex-col items-center justify-center gap-3 p-12 text-center">
-              <LoaderCircle size={26} className="animate-spin text-primary" />
-              <p className="text-sm font-bold">Analizando la imagen</p>
-              <p className="max-w-sm text-xs text-muted-foreground">
-                Varios modelos de visión evalúan la lesión de forma independiente y sus votos se combinan.
-                El proceso tarda entre 10 y 30 segundos.
+        {/* Card historial reciente */}
+        <div className="card-clinic" style={{ padding: "18px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+            <div>
+              <div className="card-label">Diagnósticos recientes</div>
+              <div className="card-title">Historial</div>
+            </div>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "var(--muted-foreground)" }}>
+              {recentList.length}
+            </span>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "340px", overflowY: "auto" }}>
+            {scans.isLoading ? (
+              <Loader text="Cargando..." />
+            ) : recentList.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "24px 0", color: "var(--muted-foreground)", fontSize: "12px" }}>
+                Aún no hay diagnósticos.
+              </div>
+            ) : (
+              recentList.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => { setResult(s as ScanLike); setSelectedId(s.id); setFile(null); setPreview(null); }}
+                  className={`recent-item ${selectedId === s.id ? "active" : ""}`}
+                >
+                  <span className="recent-thumb">
+                    {s.imageUrl ? <img src={s.imageUrl} alt="" /> : "🔬"}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: "12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {s.conclusive ? (labels[s.diagnosisCode] ?? s.diagnosis) : "No concluyente"}
+                    </span>
+                    <span style={{ display: "block", fontSize: "11px", color: "var(--muted-foreground)" }}>
+                      {(s.confidence * 100).toFixed(0)}% · {s.patientRef ?? "Sin ref."}
+                    </span>
+                  </span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "var(--muted-foreground)" }}>
+                    {new Date(s.createdAt).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </aside>
+
+      {/* ── PANEL DERECHO ── */}
+      <main>
+        {busy && !result && (
+          <div className="card-clinic" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "12px", padding: "60px", textAlign: "center", minHeight: "500px" }}>
+            <LoaderCircle size={26} className="animate-spin" style={{ color: "var(--primary)" }} />
+            <p style={{ fontWeight: 700 }}>Analizando la imagen</p>
+            <p style={{ fontSize: "13px", color: "var(--muted-foreground)", maxWidth: "300px", lineHeight: 1.6 }}>
+              El modelo de IA está procesando la lesión cutánea. Esto puede tardar entre 10 y 30 segundos.
+            </p>
+          </div>
+        )}
+
+        {!busy && !result && (
+          <div
+            style={{
+              display: "grid", placeItems: "center",
+              minHeight: "500px",
+              background: "var(--surface)",
+              border: "1px dashed var(--border)",
+              borderRadius: "var(--radius)",
+              textAlign: "center", padding: "40px",
+            }}
+          >
+            <div>
+              <div style={{ width: "56px", height: "56px", background: "var(--surface2)", borderRadius: "50%", display: "grid", placeItems: "center", margin: "0 auto 16px", fontSize: "24px" }}>🔬</div>
+              <h2 style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px" }}>Sin diagnóstico seleccionado</h2>
+              <p style={{ color: "var(--muted-foreground)", fontSize: "13px", maxWidth: "300px", lineHeight: 1.6 }}>
+                Sube una imagen de la lesión cutánea o selecciona un diagnóstico del historial para ver el reporte completo.
               </p>
             </div>
-          )}
+          </div>
+        )}
 
-          {!busy && !result && (
-            <div className="card-clinic p-8 text-center">
-              <p className="text-sm font-bold">Sin análisis en curso</p>
-              <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
-                El resultado aparecerá aquí con la clase detectada, la confianza, el semáforo de urgencia y la
-                conducta recomendada. Si la confianza es insuficiente, el sistema lo declarará no concluyente
-                en lugar de arriesgar un diagnóstico.
-              </p>
-            </div>
-          )}
-
-          {result && (
-            <ScanResult
-              scan={result}
-              labels={labels}
-              threshold={threshold}
-              classes={taxonomy.data?.classes}
-              actions={
-                patientId && !result.patientRef ? (
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    disabled={assign.isPending}
-                    onClick={async () => {
-                      const scan = await assign.mutateAsync({ scanId: result.id, patientId: Number(patientId) });
-                      setResult({ ...result, patientRef: scan.patientRef });
-                    }}
-                  >
-                    Asignar a paciente seleccionado
-                  </button>
-                ) : null
-              }
-            />
-          )}
-        </section>
-      </div>
+        {result && (
+          <ScanResult
+            scan={result}
+            labels={labels}
+            threshold={threshold}
+            classes={taxonomy.data?.classes}
+            actions={
+              patientId && !result.patientRef ? (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={assign.isPending}
+                  onClick={async () => {
+                    const scan = await assign.mutateAsync({ scanId: result.id, patientId: Number(patientId) });
+                    setResult({ ...result, patientRef: scan.patientRef });
+                  }}
+                >
+                  Asignar a paciente seleccionado
+                </button>
+              ) : null
+            }
+          />
+        )}
+      </main>
     </div>
   );
 }
